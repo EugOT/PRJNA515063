@@ -1,0 +1,3 @@
+unrecognized option: '--readids'
+pigz: skipping: temp_gz/SRR8441476_R1.fastq does not exist
+pigz: skipping: temp_gz/SRR8441476_R2.fastq does not exist

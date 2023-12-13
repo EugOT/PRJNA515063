@@ -1,0 +1,171 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+suppressPackageStartupMessages({
+    library(readr)
+    library(stringr)
+    library(dplyr)
+    library(magrittr)
+    library(SingleCellExperiment)
+    library(scater)
+    library(flexmix)
+    library(splines)
+    library(BiocParallel)
+    library(biomaRt)
+    library(miQC)
+    library(Seurat)
+    library(SeuratDisk)
+})
+runs <- 
+    list.dirs() %>% 
+    .[stringr::str_detect(string = ., pattern = "male")] %>% 
+    str_remove(pattern = "./")
+
+prepRun <- function(pathr) {
+    renm <- c("P30_LH_M3", "P30_LH_F2")
+    names(renm) <- c("male_3", "female_2")
+    prj <- pathr
+    if (prj %in% names(renm)) {
+        prj <- renm[prj]
+    }
+    result_f <- sprintf("%s.h5Seurat", prj)
+    mtx <- Read10X(data.dir = sprintf("%s/", pathr))
+    ## Initialize the Seurat object with the raw (non-normalized data).
+    srt <- CreateSeuratObject(
+        counts = mtx,
+        project = prj,
+        min.cells = 0,
+        min.features = 200
+    )
+    
+    srt@meta.data %<>% 
+    tibble::rownames_to_column(var = "bc_name")
+    rownames(srt@meta.data) <- colnames(srt)
+    srt$age <- "P30"
+    srt$sex <- str_split(pathr, "_", simplify = T)[1]
+    srt$study_id <- "mickelsen_2019"
+    srt$tech <- "10xv2"
+    
+    return(srt)
+}
+nameRun <- function(pathr) {
+    renm <- c("P30_LH_M3", "P30_LH_F2")
+    names(renm) <- c("male_3", "female_2")
+    prj <- pathr
+    if (prj %in% names(renm)) {
+        prj <- renm[prj]
+    }
+    return(prj)
+}
+srt_list <- runs %>% purrr::map(prepRun)
+names(srt_list) <- runs %>% purrr::map_chr(nameRun)
+
+```
+
+```{r}
+sce <- as.SingleCellExperiment(srt_list[['P30_LH_F2']])
+# mouse_mart <- useEnsembl("ENSEMBL_MART_ENSEMBL", "mmusculus_gene_ensembl")
+# id_map <- getBM(values = rownames(sce),
+#                 filters = "ensembl_gene_id",
+#                 attributes = c("ensembl_gene_id", "chromosome_name"),
+#                 mart = mouse_mart)
+# mt_genes <- subset(id_map,id_map$chromosome_name=="MT")$ensembl_gene_id
+# feature_ctrls <- list(mito = mt_genes)
+
+mt_genes <- grepl("^mt-",  rownames(sce))
+feature_ctrls <- list(mito = rownames(sce)[mt_genes])
+
+feature_ctrls
+
+```
+
+```{r}
+sce <- addPerCellQC(sce, subsets = feature_ctrls,
+                    BPPARAM = BiocParallel::MulticoreParam())
+
+plotMetrics(sce)
+```
+
+```{r}
+model <- mixtureModel(sce)
+plotModel(sce, model)
+plotFiltering(sce, model)
+
+```
+
+```{r}
+model2 <- mixtureModel(sce, model_type = "spline")
+plotModel(sce, model2)
+plotFiltering(sce, model2)
+
+```
+
+```{r}
+plotFiltering(sce, model2, posterior_cutoff = 0.9)
+```
+
+```{r}
+sce <- filterCells(sce, model2, posterior_cutoff = 0.9)
+srt_list[['P30_LH_F2']] <- as.Seurat(sce)
+
+rm(sce, model, model2, feature_ctrls, mt_genes)
+```
+
+```{r}
+sce <- as.SingleCellExperiment(srt_list[['P30_LH_M3']])
+mt_genes <- grepl("^mt-",  rownames(sce))
+feature_ctrls <- list(mito = rownames(sce)[mt_genes])
+
+feature_ctrls
+
+```
+
+```{r}
+sce <- addPerCellQC(sce, subsets = feature_ctrls,
+                    BPPARAM = BiocParallel::MulticoreParam())
+
+plotMetrics(sce)
+```
+
+```{r}
+model <- mixtureModel(sce)
+plotModel(sce, model)
+plotFiltering(sce, model)
+
+```
+
+```{r}
+model2 <- mixtureModel(sce, model_type = "spline")
+plotModel(sce, model2)
+plotFiltering(sce, model2)
+
+```
+
+```{r}
+plotFiltering(sce, model2, posterior_cutoff = 0.9)
+```
+
+```{r}
+sce <- filterCells(sce, model2, posterior_cutoff = 0.9)
+srt_list[['P30_LH_M3']] <- as.Seurat(sce)
+
+rm(sce, model, model2, feature_ctrls, mt_genes)
+```
+
+```{r}
+mickelsen2019_combined_lh <- 
+    merge(srt_list[["P30_LH_M3"]],
+          y = srt_list[["P30_LH_F2"]],
+          add.cell.ids = c("P30_LH_M3",
+                           "P30_LH_F2"), 
+                      project = "LH")
+glimpse(mickelsen2019_combined_lh@meta.data)
+table(mickelsen2019_combined_lh$orig.ident)
+SaveH5Seurat(mickelsen2019_combined_lh, filename = "mickelsen2019_lh.h5Seurat")
+Convert("mickelsen2019_lh.h5Seurat", dest = "h5ad")
+```
